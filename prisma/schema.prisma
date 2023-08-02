@@ -1,0 +1,13 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DB_URL")
+}
+
+model proxy {
+  id       Int    @id @default(autoincrement())
+  ip       String
+  port     Int
+  login    String
+  password String
+  retryCount Int @default(0)
+}
