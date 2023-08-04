@@ -66,15 +66,19 @@ export async function getArticles(req: Request, res: Response) {
 
     const responses: any[] = [];
 
-    await Promise.all(
+    await Promise.allSettled(
       articlesArray.map(async (article) => {
         const proxyIndex = (article - 1) % proxyList.length;
         const proxy = proxyList[proxyIndex];
 
         try {
-          const data = await makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy);
-          if (data) {
-            responses.push(data);
+          const response = await Promise.race([
+            makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy),
+            new Promise((resolve) => setTimeout(resolve, PROXY_SWITCH_TIMEOUT))
+          ]);
+
+          if (response && response.status === 'fulfilled') {
+            responses.push(response.value);
           }
         } catch (error) {
           console.error(`Failed to get data for article ${article} using proxy ${proxy.ip}:${proxy.port}`);
