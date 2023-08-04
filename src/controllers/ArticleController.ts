@@ -61,27 +61,33 @@ async function makeRequestWithProxy(url: string, proxy: any) {
 export async function getArticles(req: Request, res: Response) {
   try {
     const articlesCount = 5000;
+    const batchSize = 500;
     const articlesArray = Array.from({ length: articlesCount }, (_, i) => i + 1);
     const proxyList = await getProxies();
 
-    const responses: any[] = [];
+    const successfulResponses: any[] = [];
 
-    for (const article of articlesArray) {
-      const proxyIndex = (article - 1) % proxyList.length;
-      const proxy = proxyList[proxyIndex];
+    for (let i = 0; i < articlesCount; i += batchSize) {
+      const batchArticles = articlesArray.slice(i, i + batchSize);
 
-      const responsePromise = makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy);
-      responses.push(responsePromise);
-    }
+      const batchResponses = [];
 
-    for await (const responsePromise of responses) {
-      if (responsePromise !== null) {
-        const data = await responsePromise;
-        responses.push(data);
+      for await (const article of batchArticles) {
+        const proxyIndex = (article - 1) % proxyList.length;
+        const proxy = proxyList[proxyIndex];
+
+        try {
+          const data = await makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy);
+          if (data) {
+            batchResponses.push(data);
+          }
+        } catch (error) {
+          console.error(`Failed to get data for article ${article} using proxy ${proxy.ip}:${proxy.port}`);
+        }
       }
-    }
 
-    const successfulResponses = responses.filter((response) => response !== null);
+      successfulResponses.push(...batchResponses);
+    }
 
     res.status(200).json({ message: 'All requests completed successfully.', responses: successfulResponses });
   } catch (error) {
