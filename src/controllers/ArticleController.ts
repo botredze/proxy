@@ -4,9 +4,27 @@ import { getProxies, updateProxyRetryCount } from '../models/Proxy';
 
 const REQUESTS_PER_PROXY = 30;
 const PROXY_SWITCH_TIMEOUT = 15000;
+const MAX_RETRY_COUNT = 3;
+
+const proxyRequestCounts: { [proxyId: number]: { count: number; lastRequestTime: number } } = {};
 
 async function makeRequestWithProxy(url: string, proxy: any) {
+  const proxyId = proxy.id;
+
+  if (!proxyRequestCounts[proxyId]) {
+    proxyRequestCounts[proxyId] = { count: 0, lastRequestTime: 0 };
+  }
+
   try {
+    if (proxyRequestCounts[proxyId].count >= REQUESTS_PER_PROXY) {
+      const currentTime = Date.now();
+      const timeDiff = currentTime - proxyRequestCounts[proxyId].lastRequestTime;
+      if (timeDiff < PROXY_SWITCH_TIMEOUT) {
+        await new Promise((resolve) => setTimeout(resolve, PROXY_SWITCH_TIMEOUT - timeDiff));
+      }
+      proxyRequestCounts[proxyId].count = 0;
+    }
+
     const response = await axios.get(url, {
       proxy: {
         host: proxy.ip,
@@ -19,15 +37,25 @@ async function makeRequestWithProxy(url: string, proxy: any) {
       timeout: 7000,
     });
 
+    proxyRequestCounts[proxyId].count++;
+    proxyRequestCounts[proxyId].lastRequestTime = Date.now();
+
     return response.data;
   } catch (error: Error | any) {
-    if (error.code === 'ECONNABORTED' && error.message.startsWith('timeout') && proxy.retryCount < 3) {
-      await updateProxyRetryCount(proxy.id, proxy.retryCount + 1);
+    proxy.retryCount = proxy.retryCount || 0;
+    proxy.retryCount++;
+
+    if (proxy.retryCount > MAX_RETRY_COUNT) {
+      return null;
+    }
+
+    if (error.code === 'ECONNABORTED' && error.message.startsWith('timeout')) {
+      await updateProxyRetryCount(proxyId, proxy.retryCount);
       return makeRequestWithProxy(url, proxy);
     }
 
     throw error;
-    }
+  }
 }
 
 export async function getArticles(req: Request, res: Response) {
@@ -36,27 +64,25 @@ export async function getArticles(req: Request, res: Response) {
     const articlesArray = Array.from({ length: articlesCount }, (_, i) => i + 1);
     const proxyList = await getProxies();
 
-    let proxyIndex = 0;
-    let requestsCount = 0;
-    for (const article of articlesArray) {
-      const proxy = proxyList[proxyIndex];
+    const responses: any[] = [];
 
-      try {
-        const data = await makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy);
-        console.log(`Article: ${article}, Data:`, data);
+    await Promise.all(
+      articlesArray.map(async (article) => {
+        const proxyIndex = (article - 1) % proxyList.length;
+        const proxy = proxyList[proxyIndex];
 
-        requestsCount++;
-        if (requestsCount >= REQUESTS_PER_PROXY) {
-          requestsCount = 0;
-          proxyIndex = (proxyIndex + 1) % proxyList.length;
-          await new Promise((resolve) => setTimeout(resolve, PROXY_SWITCH_TIMEOUT));
+        try {
+          const data = await makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy);
+          if (data) {
+            responses.push(data);
+          }
+        } catch (error) {
+          console.error(`Failed to get data for article ${article} using proxy ${proxy.ip}:${proxy.port}`);
         }
-      } catch (error) {
-        console.error(`Failed to get data for article ${article} using proxy ${proxy.ip}:${proxy.port}`);
-      }
-    }
+      })
+    );
 
-    res.status(200).json({ message: 'All requests completed successfully.' });
+    res.status(200).json({ message: 'All requests completed successfully.', responses });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error.' });
   }
