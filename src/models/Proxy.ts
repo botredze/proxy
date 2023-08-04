@@ -9,11 +9,11 @@ const prisma = new PrismaClient({
   },
 });
 
-export async function getProxies(): Promise<PrismaClient['proxy'][]> {
+export async function getProxies() {
   return prisma.proxy.findMany();
 }
 
-export async function updateProxyRetryCount(proxyId: number, retryCount: number): Promise<void> {
+export async function updateProxyRetryCount(proxyId: number, retryCount: number) {
   await prisma.proxy.update({
     where: { id: proxyId },
     data: { retryCount },

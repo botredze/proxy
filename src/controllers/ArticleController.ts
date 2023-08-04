@@ -66,27 +66,24 @@ export async function getArticles(req: Request, res: Response) {
 
     const responses: any[] = [];
 
-    await Promise.allSettled(
-      articlesArray.map(async (article) => {
-        const proxyIndex = (article - 1) % proxyList.length;
-        const proxy = proxyList[proxyIndex];
+    for (const article of articlesArray) {
+      const proxyIndex = (article - 1) % proxyList.length;
+      const proxy = proxyList[proxyIndex];
 
-        try {
-          const response = await Promise.race([
-            makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy),
-            new Promise((resolve) => setTimeout(resolve, PROXY_SWITCH_TIMEOUT))
-          ]);
+      const responsePromise = makeRequestWithProxy(`https://kaspi.kz/yml/offer-view/offers/${article}`, proxy);
+      responses.push(responsePromise);
+    }
 
-          if (response && response.status === 'fulfilled') {
-            responses.push(response.value);
-          }
-        } catch (error) {
-          console.error(`Failed to get data for article ${article} using proxy ${proxy.ip}:${proxy.port}`);
-        }
-      })
-    );
+    for await (const responsePromise of responses) {
+      if (responsePromise !== null) {
+        const data = await responsePromise;
+        responses.push(data);
+      }
+    }
 
-    res.status(200).json({ message: 'All requests completed successfully.', responses });
+    const successfulResponses = responses.filter((response) => response !== null);
+
+    res.status(200).json({ message: 'All requests completed successfully.', responses: successfulResponses });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error.' });
   }
